@@ -1,0 +1,20 @@
+hash: 6415a650d21cf5a290a022682def134081740bd1a7ef469258d50f0fdef7928d
+updated: 2018-03-13T14:56:40.138500031-04:00
+imports:
+- name: github.com/adlio/trello
+  version: 47013893283bbc3b8d98f5f612c04a18f8ef227b
+- name: github.com/lib/pq
+  version: 88edab0803230a3898347e77b474f8c1820a1f20
+- name: github.com/mkorenkov/bugzilla
+  version: 74e9944263dc335f2223ea5ae310d99d770690c7
+- name: github.com/pkg/errors
+  version: 816c9085562cd7ee03e7f8188a1cfd942858cded
+- name: github.com/spf13/pflag
+  version: e57e3eeb33f795204c1ca35f56c44f83227c6e66
+- name: golang.org/x/tools
+  version: c1547a3f90f245aa85784a99580d3f601380cc07
+  subpackages:
+  - cmd/godoc
+- name: gopkg.in/yaml.v2
+  version: 7f97868eec74b32b0982dd158a51a446d1da7eb5
+testImports: []
