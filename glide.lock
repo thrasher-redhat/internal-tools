@@ -1,10 +1,16 @@
-hash: 9c36dadaed631dc17035db0286e87ea436023d9a036e6224eb1b7c589773ec36
-updated: 2018-03-13T15:29:01.866937951-04:00
+hash: c79c42f2401e8da5aaebef4f154da90e1ceb8bd5eb168fa2370bd743353e6dcc
+updated: 2018-03-14T15:05:42.276784951-04:00
 imports:
 - name: github.com/adlio/trello
   version: 47013893283bbc3b8d98f5f612c04a18f8ef227b
+- name: github.com/kolo/xmlrpc
+  version: 0826b98aaa29c0766956cb40d45cf7482a597671
 - name: github.com/lib/pq
   version: 88edab0803230a3898347e77b474f8c1820a1f20
+- name: github.com/mfojtik/bugtraq
+  version: 84d088ef03291f4fa87fd4f2c12d7872b51524ed
+  subpackages:
+  - bugzilla
 - name: github.com/mkorenkov/bugzilla
   version: 74e9944263dc335f2223ea5ae310d99d770690c7
 - name: github.com/pkg/errors
