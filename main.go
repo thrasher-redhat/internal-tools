@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/adlio/trello"
+	"github.com/mkorenkov/bugzilla"
 	flag "github.com/spf13/pflag"
 	yaml "gopkg.in/yaml.v2"
 )
@@ -19,14 +20,15 @@ type TrelloCredentials struct {
 
 // BugzillaCredentials stores the login informaiton needed to access Bugzilla API
 type BugzillaCredentials struct {
-	URL  string `yaml:"url"`
+	URL  string `yaml:"url"` //"https://bugzilla.redhat.com/xmlrpc.cgi"
 	User string `yaml:"user"`
 	Pass string `yaml:"pass"`
 }
 
 // Credentials struct to hold all API access information
 type Credentials struct {
-	Trello TrelloCredentials `yaml:"trello"`
+	Trello   TrelloCredentials   `yaml:"trello"`
+	Bugzilla BugzillaCredentials `yaml:"bugzilla"`
 }
 
 var credsFile = flag.StringP("config", "c", "/etc/internal-tools/creds.yaml", "the credentials file")
@@ -50,14 +52,14 @@ func main() {
 	var creds Credentials
 	err = yaml.Unmarshal(data, &creds)
 	if err != nil {
-		log.Fatalf("shit.  Bloody authentication: %v", err)
+		log.Fatalf("Auth error: %v", err)
 	}
 
 	// Trello API Proof of Concept
 	trelloTool(creds)
 
 	// Bugzilla API Proof of Concept
-
+	bugzillaTool(creds)
 }
 
 func trelloTool(creds Credentials) {
@@ -75,18 +77,39 @@ func trelloTool(creds Credentials) {
 	for _, list := range lists {
 		cards, err := list.GetCards(trello.Defaults())
 		if err != nil {
-			log.Printf("oh shit: %v", err)
+			log.Printf("Cannot get cards: %v", err)
 			continue
 		}
-		for _, card := range cards {
-			fmt.Printf("Name: %s\n", card.Name)
-		}
+		fmt.Printf("List '%s' has %v cards\n", list.Name, len(cards))
+		//for _, card := range cards {
+		//	fmt.Printf("Name: %s\n", card.Name)
+		//}
 	}
 
 }
 
 func bugzillaTool(creds Credentials) {
 	// Do bugzilla stuff here...
-	fmt.Println("Nothing here yet...")
-	return
+	client, err := bugzilla.NewClient(creds.Bugzilla.URL, creds.Bugzilla.User, creds.Bugzilla.Pass)
+	if err != nil {
+		log.Fatalf("Unable to auth to bugzilla: %v", err)
+	}
+
+	v, err := client.BugzillaVersion()
+	if err != nil {
+		log.Fatalf("Unable to get bugzilla version: %v", err)
+	}
+	fmt.Printf("Bugzilla Version: %v\n", v)
+
+	// BugList does an empty search...which the Red hat bugzilla doesn't allow
+	/*bugs, err := client.BugList(10, 0)
+	if err != nil {
+		log.Fatalf("Unable to get list of bugs: %v", err)
+	}
+	for _, bug := range bugs {
+		fmt.Println(bug.Assignee, bug.Subject)
+	}*/
 }
+
+// May need to fork this bugzilla API and do our own bug list function, like...
+//func (client *Client) OpenshiftBugList (limit int, offset int)([]Bug, error)

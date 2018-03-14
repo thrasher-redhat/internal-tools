@@ -37,7 +37,7 @@ func (c *client) GetAllCards(boardName string) ([]*trello.Card, error) {
 	for _, list := range lists {
 		cards, err := list.GetCards(trello.Defaults())
 		if err != nil {
-			log.Printf("oh shit: %v", err)
+			log.Printf("Cannot get cards: %v", err)
 			continue
 		}
 		allCards = append(allCards, cards...)
