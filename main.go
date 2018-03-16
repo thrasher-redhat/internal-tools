@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -9,6 +10,7 @@ import (
 	"os"
 
 	"github.com/adlio/trello"
+	_ "github.com/lib/pq"
 	mbugzilla "github.com/mfojtik/bugtraq/bugzilla"
 	"github.com/mkorenkov/bugzilla"
 	flag "github.com/spf13/pflag"
@@ -21,17 +23,26 @@ type TrelloCredentials struct {
 	Token string `yaml:"token"`
 }
 
-// BugzillaCredentials stores the login informaiton needed to access Bugzilla API
+// BugzillaCredentials stores the login information needed to access Bugzilla API
 type BugzillaCredentials struct {
 	URL  string `yaml:"url"` //"https://bugzilla.redhat.com/xmlrpc.cgi"
 	User string `yaml:"user"`
 	Pass string `yaml:"pass"`
 }
 
+// DatabaseCredentials stores the login info and db info needed for the local postgresql instance
+type DatabaseCredentials struct {
+	User         string `yaml:"user"`
+	Pass         string `yaml:"pass"`
+	DatabaseName string `yaml:"dbname"`
+	SslMode      string `yaml:"sslmode"`
+}
+
 // Credentials struct to hold all API access information
 type Credentials struct {
 	Trello   TrelloCredentials   `yaml:"trello"`
 	Bugzilla BugzillaCredentials `yaml:"bugzilla"`
+	Database DatabaseCredentials `yaml:"database"`
 }
 
 var credsFile = flag.StringP("config", "c", "/etc/internal-tools/creds.yaml", "the credentials file")
@@ -60,11 +71,20 @@ func main() {
 	}
 
 	// Trello API Proof of Concept
-	trelloTool(creds)
+	//trelloTool(creds)
 
 	// Bugzilla API Proof of Concepts
-	bugzillaTool(creds)
-	mbugzillaTool(creds)
+	//bugzillaTool(creds)
+	//mbugzillaTool(creds)
+
+	// PostgreSQL database
+	//postgresqlTool(creds)
+
+	// Combining bugzilla and database
+	fmt.Println("\nGrabbing bugs from given query and inserting them into the database")
+	mbugzillaTwo(creds)
+	fmt.Println("\nReading database and printing all bugs that are not medium or low severity")
+	readDB(creds)
 }
 
 func trelloTool(creds Credentials) {
@@ -125,8 +145,6 @@ func bugzillaTool(creds Credentials) {
 // It is Red Hat specific, which is nice
 // We can just use the bugzilla package...but would the cache do anything for us?
 func mbugzillaTool(creds Credentials) {
-	//create RedHat with user, pass, listID
-	//r.GetListJSON()
 	r := mbugzilla.RedHat{
 		User:     creds.Bugzilla.User,
 		Password: creds.Bugzilla.Pass,
@@ -137,10 +155,119 @@ func mbugzillaTool(creds Credentials) {
 		log.Fatalf("Unable to get list: %s", err)
 	}
 	fmt.Println(r.ListId)
+
+	// Pretty print JSON
 	var output bytes.Buffer
 	err = json.Indent(&output, []byte(buglist), "", "\t")
 	if err != nil {
 		log.Fatalf("JSON parse error: %s\n", err)
 	}
 	fmt.Println(string(output.Bytes()))
+}
+
+// Function to grab list of bugs and upsert to database
+func mbugzillaTwo(creds Credentials) {
+	client := mbugzilla.NewClient(creds.Bugzilla.User, creds.Bugzilla.Pass, "https://bugzilla.redhat.com/xmlrpc.cgi")
+
+	result, err := client.GetList("v2 Must Fix for Upcoming Release")
+	if err != nil {
+		log.Fatalf("Unable to get list: %s", err)
+	}
+
+	for _, bug := range result.Bugs {
+		fmt.Println(bug.Id, bug.AssignedTo, bug.Priority, bug.Severity)
+		err = addRow(creds, bug)
+		if err != nil {
+			log.Printf("Error inserting: %v\n", err)
+		}
+	}
+
+}
+
+// Basic functionality test for reading from a (local) postgreSQL database
+func postgresqlTool(creds Credentials) {
+	// This connection string can have...
+	// user, password, dbname, host, port, sslmode, fallback_application_name, connect_timeout, sslcert, sllkey, sslrootcert
+	// sslmode can be require, verify-full, verify-ca, or disable
+	connStr := fmt.Sprintf("user=%s password = %s dbname=%s sslmode=%s", creds.Database.User, creds.Database.Pass, creds.Database.DatabaseName, creds.Database.SslMode)
+	// db is intended to be long lived - open once and pass it to functions and then close it when done
+	// so NOT how we're using it here...
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		log.Fatalf("Unable to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	// For prepared queries, it would look something like...
+	// db.Query("SELECT id, name FROM users WHERE id = $1", id)
+	rows, err := db.Query("SELECT version()")
+	if err != nil {
+		log.Fatalf("Error with query: %v", err)
+	}
+	defer rows.Close()
+
+	var version string
+	for rows.Next() {
+		err = rows.Scan(&version)
+		if err != nil {
+			log.Printf("Error reading row: %v\n", err)
+		}
+		fmt.Println(version)
+	}
+	err = rows.Err()
+	if err != nil {
+		log.Fatalf("Error encountered during iteration: %v\n", err)
+	}
+}
+
+// Adds a row to the database if one does not already exist with that id
+func addRow(creds Credentials, bug mbugzilla.Bug) (err error) {
+	// Setup database connections
+	// This should really be passed along or set as a global
+	connStr := fmt.Sprintf("user=%s password = %s dbname=%s sslmode=%s", creds.Database.User, creds.Database.Pass, creds.Database.DatabaseName, creds.Database.SslMode)
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		log.Fatalf("Unable to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`INSERT INTO bugs(id, assigned, priority, severity) VALUES($1, $2, $3, $4)
+						ON CONFLICT (id) DO NOTHING`, bug.Id, bug.AssignedTo, bug.Priority, bug.Severity)
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func readDB(creds Credentials) {
+	// Setup database connections
+	connStr := fmt.Sprintf("user=%s password = %s dbname=%s sslmode=%s", creds.Database.User, creds.Database.Pass, creds.Database.DatabaseName, creds.Database.SslMode)
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		log.Fatalf("Unable to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	result, err := db.Query(`SELECT * FROM bugs WHERE severity != 'low' AND severity != 'medium'`)
+	if err != nil {
+		log.Fatalf("Error on query: %v", err)
+	}
+
+	var id int
+	var assigned, priority, severity string
+	for result.Next() {
+		err = result.Scan(&id, &assigned, &priority, &severity)
+		if err != nil {
+			log.Printf("Error reading row: %v\n", err)
+		}
+		fmt.Printf("Bug %d - Assigned to: %s\n", id, assigned)
+		fmt.Printf("Priority: %s\nSeverity: %s\n----------\n", priority, severity)
+	}
+	err = result.Err()
+	if err != nil {
+		log.Fatalf("Error encountered during iteration: %v\n", err)
+	}
+
 }
