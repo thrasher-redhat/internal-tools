@@ -1,3 +1,4 @@
+// Package trello manages and collects data from the trello api
 package trello
 
 import (
