@@ -4,14 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"io/ioutil"
-	"log"
 	"net/http"
 )
 
-// Client is implemented by anything with an ExecuteQuery method
+// Client knows how to execute a query for a saved search
 // It represents a client for a bugzilla API
 type Client interface {
-	ExecuteQuery(query string) (Bugs, error)
+	ExecuteQuery(query, sharer string, fields []string) (Bugs, error)
 }
 
 // httpBugzillaClient is a client for the bugzilla API that connects via JSONRPC over HTTP
@@ -44,14 +43,26 @@ func NewClient(user, pass, address string) Client {
 	}
 }
 
+// arguments is the set of arguments for a "savedsearch" query with the bugzilla RPC
+type arguments struct {
+	BugzillaLogin    string   `json:"Bugzilla_login"`
+	BugzillaPassword string   `json:"Bugzilla_password"`
+	SavedSearch      string   `json:"savedsearch"`
+	SharerId         string   `json:"sharer_id"`
+	IncludeFields    []string `json:"include_fields"`
+}
+
 // ExecuteQuery returns all bugs that match the given saved query
-func (bz *httpBugzillaClient) ExecuteQuery(query string) (Bugs, error) {
+func (bz *httpBugzillaClient) ExecuteQuery(query, sharer string, fields []string) (Bugs, error) {
 	// Prepare the http request
-	args := map[string]string{
-		"Bugzilla_login":    bz.username,
-		"Bugzilla_password": bz.password,
-		"savedsearch":       query,
+	args := arguments{
+		BugzillaLogin:    bz.username,
+		BugzillaPassword: bz.password,
+		SavedSearch:      query,
+		SharerId:         sharer,
+		IncludeFields:    fields,
 	}
+
 	req := &clientRequest{
 		Method: "Bug.search",
 		Params: [1]interface{}{args},
@@ -60,7 +71,6 @@ func (bz *httpBugzillaClient) ExecuteQuery(query string) (Bugs, error) {
 
 	byteReq, err := json.Marshal(req)
 	if err != nil {
-		log.Printf("Unable to marshal request: %s", err)
 		return Bugs{}, err
 	}
 
