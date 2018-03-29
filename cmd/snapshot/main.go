@@ -1,8 +1,8 @@
-// Entry point for snapshot process
 package main
 
 import (
 	"log"
+	"os"
 
 	flag "github.com/spf13/pflag"
 
@@ -10,12 +10,13 @@ import (
 	"github.com/thrasher-redhat/internal-tools/pkg/db"
 )
 
-var credsFile = flag.StringP("config", "c", "/etc/internal-tools/creds.yaml", "the credentials file")
+var configFile = flag.StringP("config", "c", "/etc/internal-tools/snapshot_cfg.yaml", "the configurations file")
+var hostName = flag.StringP("hostname", "h", "postgresql", "the database hostname")
 
 func main() {
 	// Grab the configuration values
 	flag.Parse()
-	configs, err := populate(credsFile)
+	configs, err := populateConfigs(configFile)
 	if err != nil {
 		log.Fatalf("Unable to get configs: %v", err)
 	}
@@ -43,10 +44,11 @@ func main() {
 
 	// Create database client and store the bugs
 	dbClient, err := db.NewClient(
-		configs.Sources.Database.User,
-		configs.Sources.Database.Pass,
-		configs.Sources.Database.DatabaseName,
-		configs.Sources.Database.SslMode,
+		os.Getenv("POSTGRESQL_USER"),
+		os.Getenv("POSTGRESQL_PASSWORD"),
+		os.Getenv("POSTGRESQL_DATABASE"),
+		"disable",
+		*hostName,
 	)
 	if err != nil {
 		log.Fatalf("Error creating database client: %v", err)
