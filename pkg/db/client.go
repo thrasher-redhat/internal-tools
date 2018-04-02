@@ -20,7 +20,7 @@ type Client interface {
 	Close()
 }
 
-type postGresClient struct {
+type postgresClient struct {
 	database *sql.DB
 }
 
@@ -33,41 +33,14 @@ func NewClient(user, pass, name, mode string) (Client, error) {
 		return nil, err
 	}
 
-	return &postGresClient{
+	return &postgresClient{
 		database: db,
 	}, nil
 }
 
 // Close will close the client's database connection
-func (c postGresClient) Close() {
+func (c postgresClient) Close() {
 	c.database.Close()
-}
-
-// SnapshotBugzilla removes today's bugs (if any) and stores the new bugs in a single transaction
-func (c postGresClient) SnapshotBugzilla(bugs bugzilla.Bugs) error {
-	// Setup transaction to remove today's bugs AND insert new bugs for today
-	tx, err := c.database.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	// Clear today's (old) bugs, if any
-	err = clearBugs(tx, time.Now())
-	if err != nil {
-		log.Println("Error clearing bugs - rolling back snapshot process")
-		return err
-	}
-
-	// Add today's (new) bugs
-	err = storeBugs(tx, bugs)
-	if err != nil {
-		log.Println("Error storing bugs - rolling back snapshot process")
-		return err
-	}
-
-	log.Println("Commiting transaction")
-	return tx.Commit()
 }
 
 // clearBugs will remove all bugs with the given datestamp
@@ -82,7 +55,7 @@ func clearBugs(tx *sql.Tx, t time.Time) error {
 		return err
 	}
 
-	log.Printf("Removed %d bugs for date: %v\n", total, t)
+	log.Printf("Removed %d bugs for date: %v\n", total, t.Format("2006-01-02"))
 	return nil
 }
 
@@ -146,4 +119,31 @@ func storeBugs(tx *sql.Tx, bugs bugzilla.Bugs) error {
 	}
 
 	return nil
+}
+
+// SnapshotBugzilla removes today's bugs (if any) and stores the new bugs in a single transaction
+func (c postgresClient) SnapshotBugzilla(bugs bugzilla.Bugs) error {
+	// Setup transaction to remove today's bugs AND insert new bugs for today
+	tx, err := c.database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Clear today's (old) bugs, if any
+	err = clearBugs(tx, time.Now())
+	if err != nil {
+		log.Println("Error clearing bugs - rolling back snapshot process")
+		return err
+	}
+
+	// Add today's (new) bugs
+	err = storeBugs(tx, bugs)
+	if err != nil {
+		log.Println("Error storing bugs - rolling back snapshot process")
+		return err
+	}
+
+	log.Println("Commiting transaction")
+	return tx.Commit()
 }
