@@ -1,0 +1,5 @@
+FROM fedora
+
+COPY serve /serve
+
+ENTRYPOINT ["/serve"]

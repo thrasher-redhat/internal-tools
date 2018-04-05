@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: serve
+  labels:
+    app: serve
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: serve
+  template:
+    metadata:
+      labels:
+        app: serve
+    spec:
+      containers:
+      - name: serve
+        image: serve:dev
+        ports:
+        - containerPort: 8080
+        env:
+        - name: "POSTGRESQL_USER"
+          valueFrom:
+            secretKeyRef:
+              name: postgresql
+              key: database-user
+        - name: "POSTGRESQL_PASSWORD"
+          valueFrom:
+            secretKeyRef:
+              name: postgresql
+              key: database-password
+        - name: "POSTGRESQL_DATABASE"
+          valueFrom:
+            secretKeyRef:
+              name: postgresql
+              key: database-name
+#        volumeMounts:
+#        - mountPath: /etc/internal-tools/
+#          name: cfg
+#      volumes:
+#      - name: cfg
+#        configMap:
+#          name: serve-cfg
