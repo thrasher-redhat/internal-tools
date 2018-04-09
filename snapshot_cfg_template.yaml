@@ -1,0 +1,21 @@
+---
+Sources:
+  trello:
+    key: 123456789abcdef123456789abcdef
+    token: 123456789abcdef123456789abcdef123456789abcdef123456789abcdef
+  bugzilla:
+    search: my_bug_search
+    sharer: 000001
+    fields:
+      - id
+      - component
+      - target_release
+      - assigned_to
+      - status
+      - summary
+      - keywords
+      - cf_pm_score
+      - external_bugs
+    url: https://landfill.bugzilla.org/bugzilla-5.0-branch/jsonrpc.cgi
+    user: myusername
+    pass: mypassword
