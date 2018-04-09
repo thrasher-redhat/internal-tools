@@ -26,8 +26,8 @@ type postgresClient struct {
 
 // NewClient creates and opens a db connection
 // It will be on the user to close this client
-func NewClient(user, pass, name, mode string) (Client, error) {
-	connStr := fmt.Sprintf("user=%s password=%s dbname=%s sslmode=%s", user, pass, name, mode)
+func NewClient(user, pass, name, mode, host string) (Client, error) {
+	connStr := fmt.Sprintf("user=%s password=%s dbname=%s sslmode=%s host=%s", user, pass, name, mode, host)
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, err
@@ -48,7 +48,7 @@ func clearBugs(tx *sql.Tx, t time.Time) error {
 	// Delete all bugs with given datestamp
 	result, err := tx.Exec(`DELETE FROM bugs WHERE datestamp = ($1)`, t)
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to delete bugs with date %v: %v", t, err)
 	}
 	total, err := result.RowsAffected()
 	if err != nil {
@@ -65,8 +65,8 @@ func insertBug(stmt *sql.Stmt, b bugzilla.Bug) error {
 	// TODO - Look into reflection or gogenerate
 	_, err := stmt.Exec(
 		b.Id,
-		b.Component[0],
-		b.TargetRelease[0],
+		b.Component,
+		b.TargetRelease,
 		b.AssignedTo,
 		b.Status,
 		b.Summary,
@@ -76,7 +76,7 @@ func insertBug(stmt *sql.Stmt, b bugzilla.Bug) error {
 		time.Now(),
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to insert bug with id %d: %v", b.Id, err)
 	}
 
 	return nil

@@ -18,18 +18,9 @@ type BugzillaConfigs struct {
 	Pass    string   `yaml:"pass"`
 }
 
-// DatabaseConfigs stores the info needed for the postgresql instance
-type DatabaseConfigs struct {
-	User         string `yaml:"user"`
-	Pass         string `yaml:"pass"`
-	DatabaseName string `yaml:"dbname"`
-	SslMode      string `yaml:"sslmode"`
-}
-
 // SourceConfigs struct holds credentials for each API we need to access
 type SourceConfigs struct {
 	Bugzilla BugzillaConfigs `yaml:"bugzilla"`
-	Database DatabaseConfigs `yaml:"database"`
 	//Trello TrelloConfigs `yaml:"trello"`
 }
 
@@ -38,8 +29,8 @@ type Configs struct {
 	Sources SourceConfigs `yaml:"Sources"`
 }
 
-// populate reads the given yaml file and populates the configuration options structs
-func populate(fileName *string) (Configs, error) {
+// populateConfigs reads the given yaml file and populates the configuration options structs
+func populateConfigs(fileName *string) (Configs, error) {
 	file, err := os.Open(*fileName)
 	if err != nil {
 		return Configs{}, fmt.Errorf("unable to open configuration file: %v", err)

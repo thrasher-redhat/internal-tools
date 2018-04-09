@@ -3,6 +3,7 @@ package bugzilla
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 )
@@ -71,22 +72,26 @@ func (bz *httpBugzillaClient) ExecuteQuery(query, sharer string, fields []string
 
 	byteReq, err := json.Marshal(req)
 	if err != nil {
-		return Bugs{}, err
+		return Bugs{}, fmt.Errorf("unable to marshal http request: %v", err)
 	}
 
 	// Send the query over post and parse the response
 	response, err := http.Post(bz.url, "application/json", bytes.NewReader(byteReq))
 	if err != nil {
-		return Bugs{}, err
+		return Bugs{}, fmt.Errorf("error when POSTing query: %v", err)
 	}
 	defer response.Body.Close()
 
 	byteRes, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		return Bugs{}, fmt.Errorf("error reading from response body: %v", err)
+	}
+
 	var results clientResponse
 	err = json.Unmarshal(byteRes, &results)
 	if err != nil {
-		return Bugs{}, err
+		return Bugs{}, fmt.Errorf("unable to unmarshal http response: %v", err)
 	}
 
-	return results.Result, err
+	return results.Result, nil
 }
