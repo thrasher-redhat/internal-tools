@@ -1,1 +1,4 @@
 /vendor
+/bin
+/deploy/snapshot
+/deploy/serve

@@ -1,0 +1,5 @@
+FROM fedora
+
+COPY snapshot /snapshot
+
+ENTRYPOINT ["/snapshot"]

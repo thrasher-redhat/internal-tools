@@ -1,0 +1,50 @@
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  labels:
+    run: snapshot
+  name: snapshot
+spec:
+  concurrencyPolicy: Replace
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    metadata:
+      labels:
+        run: snapshot
+    spec:
+      template:
+        metadata:
+          labels:
+            run: snapshot
+        spec:
+          containers:
+          - image: snapshot:dev
+            name: snapshot
+            env:
+            - name: "POSTGRESQL_USER"
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql
+                  key: database-user
+            - name: "POSTGRESQL_PASSWORD"
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql
+                  key: database-password
+            - name: "POSTGRESQL_DATABASE"
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql
+                  key: database-name
+            volumeMounts:
+            - mountPath: /etc/internal-tools/
+              name: cfg
+          volumes:
+          - name: cfg
+            configMap:
+              name: snapshot-cfg
+          restartPolicy: OnFailure
+
+  schedule: '0 6-20 * * *'
+  successfulJobsHistoryLimit: 3
+  suspend: false
