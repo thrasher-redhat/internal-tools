@@ -1,10 +1,8 @@
-package: github.com/openshift/internal-tools
+package: github.com/thrasher-redhat/internal-tools
 import:
 - package: github.com/lib/pq
-- package: github.com/mkorenkov/bugzilla
 - package: github.com/adlio/trello
 - package: github.com/spf13/pflag
   version: ^1.0.0
-- package: github.com/mfojtik/bugtraq
-  subpackages:
-  - bugzilla
+- package: gopkg.in/yaml.v2
+  version: ^2.2.1
