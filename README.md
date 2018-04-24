@@ -17,7 +17,7 @@ Assuming you already have `oc` installed and have an OpenShift project...
 
 Setup a standard Postgresql template.  This will include a the pod, a persistent volume for storage, and a service to access the database.
 
-Once running, the database will need to be initialized with the `database/*.sql` files, which will create the necessary tables.
+Once running, the database will need to be initialized with the `database/*.sql` files, which will create the necessary tables and views.
 
 ### Snapshoter
 
@@ -60,7 +60,7 @@ Alternatively, this program can be run locally for testing or dev purposes.
 
 ### Postgresql Database
 
-Install and setup a postgresql database.  Create the necessary tables by running the `database/*.sql` files.
+Install and setup a postgresql database.  Create the necessary tables and views by running the `database/*.sql` files.
 
 Export your postgresql username, password, and database name as the appropriate environment variables.
 
@@ -70,7 +70,7 @@ Export your postgresql username, password, and database name as the appropriate 
 
 ### Snapshoter
 
-The snapshoter can be run as go code.  Use the --config (-c) and --hostname (-h) flags to pass in the location of the snapshot config yaml file and the database hostname (probably "localhost" if running locally).
+The snapshoter can be run as go code.  Use the --config (-c) and --hostname (-h) flags to pass in the location of the snapshot config yaml file and the database hostname (probably "localhost" if running locally).  Ensure the local database environement variables have been set up.
 
     go run cmd/snapshot/main.go cmd/snapshot/options.go -c /path/to/snapshot_cfg.yaml -h "localhost"
 
@@ -78,11 +78,36 @@ This can also be built and run as a cron job to more accurately replicate the da
 
 ### Server
 
-The server is currently very simple and can be run with:
+The server can be run at localhost:8080.  Use the --config (-c) and --hostname (-h) flags to pass in the location of the server config yaml file and the database hostname (probably "localhost" if running locally).  Ensure the local database environement variables have been set up.
 
-    go run cmd/serve/main.go
+    go run cmd/serve/main.go -c ~/path/to/serve_cfg.yaml -h localhost
 
-In the future, the server will require access to a server_config.yaml as well as the postgresql information.  More information on those flags and environment variables will be added when appropriate.
+
+
+## Development
+
+### Make
+
+The `Makefile` contains a couple of commands.
+
+* `make` or `make all` will build run `go build` for the snapshot and serve packages
+* `make images` will `docker build` from the go executables
+* `make all images` will do both in order
+
+### Generate with go-bindata
+
+The assets package is generated from the graphql schema using go-bindata.  If you wish to edit pkg/api/schema.graphql , then you'll need to re-generate the assets package.  If you don't have the `go-bindata` command, use `go get` to grab the go-bindata package and ensure your $PATH contains $GOPATH/bin or that the go-bindata executable is otherwise in your $PATH.
+
+```
+go get github.com/go-bindata/go-bindata
+go-bindata -pkg assets -o pkg/assets/schema.go pkg/api/schema.graphql
+```
+
+Likewise, if you change the api endpoint, you may want to update graphiql.html to reflect that and then regenerate the graphiql package with the following command (assuming you already have go-bindata).  
+
+```
+go-bindata -pkg graphiql -o pkg/graphiql/page.go cmd/serve/graphiql.html
+```
 
 ## License
 

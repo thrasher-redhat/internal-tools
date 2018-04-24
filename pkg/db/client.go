@@ -12,11 +12,26 @@ import (
 	"github.com/thrasher-redhat/internal-tools/pkg/bugzilla"
 )
 
-// Client knows how to connect and interact with the database
-type Client interface {
+// WriteClient knows how to write to the database
+type WriteClient interface {
 	SnapshotBugzilla(bugzilla.Bugs) error
 	//SnapshotTrello() will be here in the future
-	//QueryBugs() and other read functions
+}
+
+// ReadClient knows how to query the database (read-only)
+type ReadClient interface {
+	GetLatest() (time.Time, error)
+	GetEarliest() (time.Time, error)
+	GetPreviousDate(string) (time.Time, error)
+	GetEarliestDateForTargets([]string) (time.Time, error)
+	GetBreakdown(string, string, []string, []string, bool, []string) (Breakdown, error)
+	GetBugs(string, []string) ([]bugzilla.Bug, error)
+}
+
+// Client knows how to connect and interact with the database
+type Client interface {
+	ReadClient
+	WriteClient
 	Close()
 }
 
