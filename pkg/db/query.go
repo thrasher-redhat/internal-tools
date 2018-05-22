@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -11,11 +12,33 @@ import (
 	"github.com/thrasher-redhat/internal-tools/pkg/bugzilla"
 )
 
+// Begin starts a read-only transaction
+func (c *postgresClient) Begin() (ReadQuerier, error) {
+	tx, err := c.database.BeginTx(context.Background(), &sql.TxOptions{
+		ReadOnly: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &postgresQuerier{
+		tx: tx,
+	}, nil
+}
+
+// End commits the read-only transaction
+// Rollback is not used as no changes are being made
+func (q *postgresQuerier) End() error {
+	return q.tx.Commit()
+}
+
 // GetLatest provides the most recent datestamp in the database.
-func (c postgresClient) GetLatest() (time.Time, error) {
+func (q *postgresQuerier) GetLatest() (time.Time, error) {
+	q.txMu.Lock()
+	defer q.txMu.Unlock()
 	// Query the database to get the latest datestamp
 	var t time.Time
-	err := c.database.QueryRow("SELECT MAX(datestamp) FROM bugs").Scan(&t)
+	err := q.tx.QueryRow("SELECT MAX(datestamp) FROM bugs").Scan(&t)
 
 	if err != nil {
 		return time.Time{}, fmt.Errorf("error scanning row for latest datestamp: %v", err)
@@ -25,10 +48,12 @@ func (c postgresClient) GetLatest() (time.Time, error) {
 }
 
 // GetEarliest provides the oldest datestamp in the database.
-func (c postgresClient) GetEarliest() (time.Time, error) {
+func (q *postgresQuerier) GetEarliest() (time.Time, error) {
+	q.txMu.Lock()
+	defer q.txMu.Unlock()
 	// Query the database to get the earliest datestamp
 	var t time.Time
-	err := c.database.QueryRow("SELECT MIN(datestamp) FROM bugs").Scan(&t)
+	err := q.tx.QueryRow("SELECT MIN(datestamp) FROM bugs").Scan(&t)
 
 	if err != nil {
 		return time.Time{}, fmt.Errorf("error scanning row for earliest datestamp: %v", err)
@@ -38,14 +63,16 @@ func (c postgresClient) GetEarliest() (time.Time, error) {
 }
 
 // GetEarliestDateForTargets finds the first datestamp where the given target releases appeared
-func (c postgresClient) GetEarliestDateForTargets(targets []string) (time.Time, error) {
+func (q *postgresQuerier) GetEarliestDateForTargets(targets []string) (time.Time, error) {
+	q.txMu.Lock()
+	defer q.txMu.Unlock()
 	var t time.Time
 	if targets == nil || len(targets) == 0 {
 		// No targets provided
 		return time.Time{}, fmt.Errorf("unable to get earliest date for targets: invalid targets %q", targets)
 	}
 
-	err := c.database.QueryRow("SELECT MIN(datestamp) FROM bugs WHERE target_release = ANY($1)", pq.Array(targets)).Scan(&t)
+	err := q.tx.QueryRow("SELECT MIN(datestamp) FROM bugs WHERE target_release = ANY($1)", pq.Array(targets)).Scan(&t)
 
 	if err != nil {
 		return time.Time{}, fmt.Errorf("error scanning row for earliest date with targets %q: %v", targets, err)
@@ -56,12 +83,14 @@ func (c postgresClient) GetEarliestDateForTargets(targets []string) (time.Time, 
 
 // GetPreviousDate checks for the existence of the given date and then gets the snapshot preceding that given date.
 // If the query is successful, but there are zero results, will return zerotime to be used as the previous date.
-func (c postgresClient) GetPreviousDate(date string) (time.Time, error) {
+func (q *postgresQuerier) GetPreviousDate(date string) (time.Time, error) {
+	q.txMu.Lock()
+	defer q.txMu.Unlock()
 	// TODO: Use a transaction...?
 
 	// Check for the existence of given date.
 	var ct int
-	err := c.database.QueryRow("SELECT COUNT(id) FROM bugs WHERE datestamp = $1", date).Scan(&ct)
+	err := q.tx.QueryRow("SELECT COUNT(id) FROM bugs WHERE datestamp = $1", date).Scan(&ct)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -71,10 +100,10 @@ func (c postgresClient) GetPreviousDate(date string) (time.Time, error) {
 
 	// Query the database to get the date before the given date
 	var t time.Time
-	err = c.database.QueryRow("SELECT DISTINCT datestamp FROM bugs WHERE datestamp < $1 ORDER BY datestamp DESC LIMIT 1", date).Scan(&t)
+	err = q.tx.QueryRow("SELECT DISTINCT datestamp FROM bugs WHERE datestamp < $1 ORDER BY datestamp DESC LIMIT 1", date).Scan(&t)
 	if err == sql.ErrNoRows {
 		// The given date is the earliset possible date in the database; there are no datestamps before it
-		log.Printf("Found no datestamps from before %q in the database: %v", date, err)
+		//log.Printf("Found no datestamps from before %q in the database: %v", date, err)
 		return time.Time{}, nil
 	} else if err != nil {
 		return time.Time{}, fmt.Errorf("error scanning row for previous datestamp: %v", err)
@@ -110,7 +139,7 @@ func appendQueryConditional(baseQuery string, baseArgs []interface{}, conditiona
 // Functions to query the database
 
 // getBugs queries for a list of bugs
-func (c postgresClient) GetBugs(datestamp string, components []string) ([]bugzilla.Bug, error) {
+func (q *postgresQuerier) GetBugs(datestamp string, components []string) ([]bugzilla.Bug, error) {
 	// Base query
 	// Grabs all components of the bug from bugs
 	// Also grabs the "bug age", the difference between the given datestamp
@@ -132,7 +161,9 @@ func (c postgresClient) GetBugs(datestamp string, components []string) ([]bugzil
 	// Sort by pmScore
 	query += " ORDER BY bugs.cf_pm_score DESC"
 
-	rows, err := c.database.Query(query, args...)
+	q.txMu.Lock()
+	defer q.txMu.Unlock()
+	rows, err := q.tx.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +209,7 @@ type Breakdown struct {
 }
 
 // GetBreakdown calculates the counts for total bugs, new bugs, and closed bugs
-func (c postgresClient) GetBreakdown(startDate, endDate string, components []string, keywords []string, custCase bool, targetReleases []string) (Breakdown, error) {
+func (q *postgresQuerier) GetBreakdown(startDate, endDate string, components []string, keywords []string, custCase bool, targetReleases []string) (Breakdown, error) {
 	var total int
 	var new int
 	var closed int
@@ -220,8 +251,11 @@ func (c postgresClient) GetBreakdown(startDate, endDate string, components []str
 		query, args = appendQueryConditional(query, args, "AND target_release = Any(ARRAY[%v])", typelessTargets)
 	}
 
+	q.txMu.Lock()
+	defer q.txMu.Unlock()
+
 	// Get the TOTAL number of bugs on the given day
-	err := c.database.QueryRow(query, args...).Scan(&total)
+	err := q.tx.QueryRow(query, args...).Scan(&total)
 	if err != nil {
 		log.Printf("Error querying for TOTAL bug count: %v", err)
 		return Breakdown{}, err
@@ -232,7 +266,7 @@ func (c postgresClient) GetBreakdown(startDate, endDate string, components []str
 	subQuery := "AND id NOT IN (SELECT id FROM bugs WHERE datestamp = %v)"
 	newQuery, newArgs := appendQueryConditional(query, args, subQuery, []interface{}{startDate})
 
-	err = c.database.QueryRow(newQuery, newArgs...).Scan(&new)
+	err = q.tx.QueryRow(newQuery, newArgs...).Scan(&new)
 	if err != nil {
 		log.Printf("Error querying for NEW bug count: %v", err)
 		return Breakdown{}, err
@@ -243,7 +277,7 @@ func (c postgresClient) GetBreakdown(startDate, endDate string, components []str
 	closedQuery, closedArgs := appendQueryConditional(query, args, "AND id NOT IN (SELECT id FROM bugs where datestamp = %v)", []interface{}{endDate})
 	closedArgs[0] = startDate
 
-	err = c.database.QueryRow(closedQuery, closedArgs...).Scan(&closed)
+	err = q.tx.QueryRow(closedQuery, closedArgs...).Scan(&closed)
 	if err != nil {
 		log.Printf("Error querying for CLOSED bug count: %v", err)
 		return Breakdown{}, err
