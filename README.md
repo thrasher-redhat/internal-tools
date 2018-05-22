@@ -1,9 +1,11 @@
 # internal-tools
 Initial testing and research for some internal metrics tools.
 
-Uses the Red Hat Bugzilla API to grab data from a supplied bugzilla saved query.  In the future, will also grab relevant trello information.  All information is stored into a postgresql database.  The data is snapshotted hourly, but previous snapshots for that day are removed - resulting in a single snapshot per day.
+Uses the Red Hat Bugzilla API to grab data from a bugzilla saved query.  In the future, may also grab relevant trello information.  All information is stored into a postgresql database.  The data is snapshotted hourly, but previous snapshots for that day are removed - resulting in a single snapshot per day.
 
-Will generate and serve visual representations of the stored information.
+There will be an API server to access the data and information calculated from the data.
+
+Ther will also be a frontend to display information and to visually represent some of the analytics.
 
 This app is designed to be containerized and run on OpenShift.
 
@@ -15,9 +17,13 @@ Assuming you already have `oc` installed and have an OpenShift project...
 
 ### Postgresql Container
 
-Setup a standard Postgresql template.  This will include a the pod, a persistent volume for storage, and a service to access the database.
+Setup a standard Postgresql template.  This will include a the pod, a persistent volume for storage, and a service to access the database.  It will generate a database name, user, and password, as well as setting the POSTGRESQL_DATABASE, POSTGRESQL_USER, and POSTGRESQL_PASSWORD environment variables.
 
-Once running, the database will need to be initialized with the `database/*.sql` files, which will create the necessary tables and views.
+There is some initial setup needed, so `oc rsh` into the postgresql pod.  Connect to the database with `psql` as the generated user.
+
+    psql --dbname=$POSTGRESQL_DATABASE --username=$POSTGRESQL_USER
+
+We can then initialize the database with the `database/*.sql` files.  Copy and paste the commands into psql to create the necessary tables and views.  You can leave psql with `\q`.
 
 ### Snapshoter
 
@@ -33,7 +39,7 @@ Apply the yaml file to create a Cron Job.
 
     oc apply -f deploy/snapshoter.yaml
 
-Populate the snapshot_cfg.yaml file with the proper information and add a configmap  to make it accessable to the pod.
+Create your snapshot_cfg.yaml file from the template with the proper information and create a configmap to make it accessable to the pod.  The config map should be named 'snapshot-cfg' with a key of 'snapshot_cfg.yaml' and the contents of the file will be the value.
 
 ### Server
 
@@ -81,8 +87,6 @@ This can also be built and run as a cron job to more accurately replicate the da
 The server can be run at localhost:8080.  Use the --config (-c) and --hostname (-h) flags to pass in the location of the server config yaml file and the database hostname (probably "localhost" if running locally).  Ensure the local database environement variables have been set up.
 
     go run cmd/serve/main.go -c ~/path/to/serve_cfg.yaml -h localhost
-
-
 
 ## Development
 
