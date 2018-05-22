@@ -35,10 +35,10 @@ spec:
             secretKeyRef:
               name: postgresql
               key: database-name
-#        volumeMounts:
-#        - mountPath: /etc/internal-tools/
-#          name: cfg
-#      volumes:
-#      - name: cfg
-#        configMap:
-#          name: serve-cfg
+        volumeMounts:
+        - mountPath: /etc/internal-tools/
+          name: cfg
+      volumes:
+      - name: cfg
+        configMap:
+          name: serve-cfg

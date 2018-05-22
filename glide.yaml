@@ -6,3 +6,4 @@ import:
   version: ^1.0.0
 - package: gopkg.in/yaml.v2
   version: ^2.2.1
+- package: github.com/graph-gophers/graphql-go

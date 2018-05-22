@@ -5,7 +5,12 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+
+	"github.com/lib/pq"
 )
+
+// ExternalID is the specific ID for "Red Hat Customer Portal"
+const ExternalID = 60
 
 // SingleElemSlice deals with the special case where an [1]array is returned
 type SingleElemSlice string
@@ -56,15 +61,16 @@ func (s *Score) UnmarshalJSON(b []byte) error {
 // Bug maps to the desired fields of a bugzilla bug
 type Bug struct {
 	Id            int             `json:"id"`
-	Status        string          `json:"status"`
-	Summary       string          `json:"summary"`
 	Component     SingleElemSlice `json:"component"`
 	TargetRelease SingleElemSlice `json:"target_release"`
 	AssignedTo    string          `json:"assigned_to"`
-	Keywords      []string        `json:"keywords"`
+	Status        string          `json:"status"`
+	Keywords      pq.StringArray  `json:"keywords"`
 	PmScore       Score           `json:"cf_pm_score"`
+	Summary       string          `json:"summary"`
 	Externals     json.RawMessage `json:"external_bugs"`
 	DateStamp     time.Time
+	Age           int
 }
 
 // Bugs is a list of, well, bugs

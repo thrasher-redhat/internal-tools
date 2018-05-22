@@ -1,0 +1,1 @@
+CREATE VIEW bug_age AS SELECT id, MIN(datestamp) FROM bugs GROUP BY id;

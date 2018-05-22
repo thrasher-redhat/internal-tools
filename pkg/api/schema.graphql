@@ -1,0 +1,87 @@
+schema {
+    query: Query
+}
+
+# Query represents the entry points into the schema
+type Query {
+    # Returns the list of bugs for a given datestamp (defaults to latest date).
+    bugs(datestamp: String = "_latest", components: [String!]): [Bug]!
+    # Returns a snapshot of the database for a given datestamp (defaults to latest date).
+    snapshot(datestamp: String = "_latest"): Snapshot
+    # Returns the dates and rollups associated with a given release.
+    release(name: String!, components: [String!]): Release
+    # Returns a list of rollups over the past 3 sprints (9 weeks).
+    rollups(components: [String!]): [Rollup]!
+    # Returns a list of all releases (with associated dates and rollups).
+    releases(components: [String!]): [Release]!
+}
+
+type Bug {
+    # The bugzilla ID.
+    id: Int!
+    # The date that this bug was recorded (YYYY-MM-DD).
+    datestamp: String!
+    # The component that the bug belongs to.
+    component: String!
+    # The bug status.  NEW, ASSIGNED, POST, or ON_DEV.
+    status: String!
+    # The title of the bug.
+    summary: String!
+    # The release associated with the bug.  No release is '---'.
+    targetRelease: String!
+    # The email of the person that the bug is assigned to.
+    assignedTo: String!
+    # A score determined from the bug's priority and visibility.
+    pmScore: Int!
+    # A list of keywords associated with the bug.
+    keywords: [String!]!
+    # If the bug has one or more customer cases associated with it.
+    customerCase: Boolean!
+    # The number of days since this bug was first tracked.
+    age: Int!
+}
+
+type Rollup {
+    # The date of the rollup
+    datestamp: String!
+    # The totals for all bugs in the query.
+    all: Breakdown!
+    # The totals for all bugs in the query with blocker keywords.
+    blockers: Breakdown!
+    # The totals for all bugs in the query with one or more customer cases attached.
+    customerCases: Breakdown!
+}
+
+type Breakdown {
+    # The total number of bugs in the given query.
+    total: Int!
+    # The number of bug ids that are in the given query and were not in the previous date's query.
+    new: Int!
+    # The number of bug ids that were in the previous date's query and are not in the current query.
+    closed: Int!
+}
+
+# Snapshot provides all the data needed for the client's front page.
+type Snapshot {
+    # The date that the snapshot is for (YYYY-MM-DD).  Generally the latest date in the database.
+    datestamp: String!
+    # The list of all bugs for the given date.
+    bugs: [Bug]
+    # A rollup to track various bug totals for the given date.
+    rollup: Rollup!
+}
+
+# A release provides the name and dates associated with a release, as well as rollups for each day in the release for graphing purposes.
+type Release {
+    name: String!
+    # The first day of the release.
+    start: String!
+    # The General Availability date.
+    ga: String!
+    # The date after which no new features are added.
+    featureComplete: String!
+    # The date after which no new code is accepted.
+    codeFreeze: String!
+    # Rollups for each day between start (default earliest) and GA (default latest)
+    rollups: [Rollup]!
+}
