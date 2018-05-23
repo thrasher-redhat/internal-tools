@@ -60,7 +60,7 @@ func (s *Score) UnmarshalJSON(b []byte) error {
 
 // Bug maps to the desired fields of a bugzilla bug
 type Bug struct {
-	Id            int             `json:"id"`
+	ID            int             `json:"id"`
 	Component     SingleElemSlice `json:"component"`
 	TargetRelease SingleElemSlice `json:"target_release"`
 	AssignedTo    string          `json:"assigned_to"`

@@ -144,7 +144,7 @@ func (c postgresClient) GetBugs(datestamp string, components []string) ([]bugzil
 	for rows.Next() {
 		var b bugzilla.Bug
 		err = rows.Scan(
-			&b.Id,
+			&b.ID,
 			&b.Component,
 			&b.TargetRelease,
 			&b.AssignedTo,

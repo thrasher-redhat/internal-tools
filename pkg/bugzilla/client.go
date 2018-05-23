@@ -25,12 +25,12 @@ type httpBugzillaClient struct {
 type clientRequest struct {
 	Method string         `json:"method"`
 	Params [1]interface{} `json:"params"`
-	Id     uint64         `json:"id"`
+	ID     uint64         `json:"id"`
 }
 
 // clientResponse is the JSONRPC wrapper structure for responses
 type clientResponse struct {
-	Id     uint64      `json:"id"`
+	ID     uint64      `json:"id"`
 	Result Bugs        `json:"result"`
 	Error  interface{} `json:"error"`
 }
@@ -49,7 +49,7 @@ type arguments struct {
 	BugzillaLogin    string   `json:"Bugzilla_login"`
 	BugzillaPassword string   `json:"Bugzilla_password"`
 	SavedSearch      string   `json:"savedsearch"`
-	SharerId         string   `json:"sharer_id"`
+	SharerID         string   `json:"sharer_id"`
 	IncludeFields    []string `json:"include_fields"`
 }
 
@@ -60,14 +60,14 @@ func (bz *httpBugzillaClient) ExecuteQuery(query, sharer string, fields []string
 		BugzillaLogin:    bz.username,
 		BugzillaPassword: bz.password,
 		SavedSearch:      query,
-		SharerId:         sharer,
+		SharerID:         sharer,
 		IncludeFields:    fields,
 	}
 
 	req := &clientRequest{
 		Method: "Bug.search",
 		Params: [1]interface{}{args},
-		Id:     0,
+		ID:     0,
 	}
 
 	byteReq, err := json.Marshal(req)
