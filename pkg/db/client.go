@@ -79,7 +79,7 @@ func clearBugs(tx *sql.Tx, t time.Time) error {
 func insertBug(stmt *sql.Stmt, b bugzilla.Bug) error {
 	// TODO - Look into reflection or gogenerate
 	_, err := stmt.Exec(
-		b.Id,
+		b.ID,
 		b.Component,
 		b.TargetRelease,
 		b.AssignedTo,
@@ -91,7 +91,7 @@ func insertBug(stmt *sql.Stmt, b bugzilla.Bug) error {
 		time.Now(),
 	)
 	if err != nil {
-		return fmt.Errorf("unable to insert bug with id %d: %v", b.Id, err)
+		return fmt.Errorf("unable to insert bug with id %d: %v", b.ID, err)
 	}
 
 	return nil

@@ -15,8 +15,8 @@ func (r *BugResolver) DateStamp() string {
 	return r.bug.DateStamp.Format(dateFormat)
 }
 
-func (r *BugResolver) Id() int32 {
-	return int32(r.bug.Id)
+func (r *BugResolver) ID() int32 {
+	return int32(r.bug.ID)
 }
 
 func (r *BugResolver) Component() string {
@@ -50,7 +50,7 @@ func (r *BugResolver) PmScore() int32 {
 
 // external is for parsing the json 'externals' object
 type external struct {
-	ExtBzId int `json:"ext_bz_id"`
+	ExtBzID int `json:"ext_bz_id"`
 }
 
 // CustomerCase returns if there are any customer cases associated with the bug
@@ -64,7 +64,7 @@ func (r *BugResolver) CustomerCase() bool {
 	}
 
 	for _, ex := range e {
-		if ex.ExtBzId == bugzilla.ExternalID {
+		if ex.ExtBzID == bugzilla.ExternalID {
 			return true
 		}
 	}
