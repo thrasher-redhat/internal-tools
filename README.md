@@ -5,7 +5,7 @@ Uses the Red Hat Bugzilla API to grab data from a bugzilla saved query.  In the 
 
 There will be an API server to access the data and information calculated from the data.
 
-Ther will also be a frontend to display information and to visually represent some of the analytics.
+There will also be a frontend to display information and to visually represent some of the analytics.
 
 This app is designed to be containerized and run on OpenShift.
 
@@ -76,7 +76,7 @@ Export your postgresql username, password, and database name as the appropriate 
 
 ### Snapshoter
 
-The snapshoter can be run as go code.  Use the --config (-c) and --hostname (-h) flags to pass in the location of the snapshot config yaml file and the database hostname (probably "localhost" if running locally).  Ensure the local database environement variables have been set up.
+The snapshoter can be run as go code.  Use the --config (-c) and --hostname (-h) flags to pass in the location of the snapshot config yaml file and the database hostname (probably "localhost" if running locally).  Ensure the local database environment variables have been set up.
 
     go run cmd/snapshot/main.go cmd/snapshot/options.go -c /path/to/snapshot_cfg.yaml -h "localhost"
 

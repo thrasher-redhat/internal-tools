@@ -16,6 +16,7 @@ import (
 	"github.com/thrasher-redhat/internal-tools/pkg/db"
 	"github.com/thrasher-redhat/internal-tools/pkg/graphiql"
 	"github.com/thrasher-redhat/internal-tools/pkg/options"
+	"github.com/thrasher-redhat/internal-tools/pkg/resolverctx"
 )
 
 // graphiqlHandler is a simple handler to serve the GraphiQL interface.
@@ -57,7 +58,7 @@ func main() {
 	}
 	defer db.Close()
 
-	resolver, err := api.NewResolver(db, configs.Releases, configs.Blockers)
+	resolver, err := api.NewResolver(configs.Releases, configs.Blockers)
 	if err != nil {
 		log.Fatalf("Unable to create resolver: %v", err)
 	}
@@ -70,7 +71,26 @@ func main() {
 
 	// GraphiQL frontend for testing queries
 	http.HandleFunc("/", graphiqlHandler)
-	http.Handle("/api/v1", &relay.Handler{Schema: schema})
+	handler := &relay.Handler{Schema: schema}
+	http.HandleFunc("/api/v1", func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		tx, err := db.Begin()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, "500 Error: Unable to complete request.")
+			log.Printf("Unable to begin a transaction: %v", err)
+			return
+		}
+		defer func() {
+			if err := tx.End(); err != nil {
+				log.Printf("Unable to commit transaction: %v", err)
+			}
+		}()
+		ctx = resolverctx.WithTx(ctx, tx)
+		r = r.WithContext(ctx)
+
+		handler.ServeHTTP(w, r)
+	})
 
 	log.Println("LISTENING...")
 	log.Fatal(http.ListenAndServe(":8080", nil))

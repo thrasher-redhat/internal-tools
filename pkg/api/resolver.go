@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/thrasher-redhat/internal-tools/pkg/db"
 	"github.com/thrasher-redhat/internal-tools/pkg/options"
+	"github.com/thrasher-redhat/internal-tools/pkg/resolverctx"
 )
 
 // All dates should use the YYYY-MM-DD format
@@ -14,13 +16,12 @@ var dateFormat = "2006-01-02"
 
 // Resolver represents the connection between the API and the data
 type Resolver struct {
-	dbClient db.Client
 	releases map[string]options.Release
 	blockers []string
 }
 
 // NewResolver is a factory for Resolver
-func NewResolver(db db.Client, releases []options.Release, blockers []string) (*Resolver, error) {
+func NewResolver(releases []options.Release, blockers []string) (*Resolver, error) {
 
 	// Create a map of releases using the release name as the key
 	m := make(map[string]options.Release)
@@ -29,24 +30,23 @@ func NewResolver(db db.Client, releases []options.Release, blockers []string) (*
 	}
 
 	return &Resolver{
-		dbClient: db,
 		releases: m,
 		blockers: blockers,
 	}, nil
 }
 
 // parseDatestamp checks for empty date or special strings before returning a date string.
-func (r Resolver) parseDatestamp(datestamp string) (string, error) {
+func (r *Resolver) parseDatestamp(tx db.ReadQuerier, datestamp string) (string, error) {
 	// Default to latest
 	switch datestamp {
 	case "", "_latest":
-		date, err := r.dbClient.GetLatest()
+		date, err := tx.GetLatest()
 		if err != nil {
 			return "", newAPISafeError(err, "Error retreiving latest date")
 		}
 		datestamp = date.Format(dateFormat)
 	case "_earliest":
-		date, err := r.dbClient.GetEarliest()
+		date, err := tx.GetEarliest()
 		if err != nil {
 			return "", newAPISafeError(err, "Error retreiving earliest date")
 		}
@@ -79,9 +79,9 @@ func parseComponents(components *[]string) []string {
 }
 
 // getBugs queries the database for a list of bugs and converts to BugResolvers
-func (r *Resolver) getBugs(datestamp string, components []string) ([]*BugResolver, error) {
+func (r *Resolver) getBugs(tx db.ReadQuerier, datestamp string, components []string) ([]*BugResolver, error) {
 	// Query the database
-	bugs, err := r.dbClient.GetBugs(datestamp, components)
+	bugs, err := tx.GetBugs(datestamp, components)
 	if err != nil {
 		return nil, newAPISafeError(err, "Error querying for list of bugs")
 	}
@@ -95,13 +95,19 @@ func (r *Resolver) getBugs(datestamp string, components []string) ([]*BugResolve
 }
 
 // Bugs is a graphql query that fetches a list of bugs
-func (r *Resolver) Bugs(args struct {
+func (r *Resolver) Bugs(ctx context.Context, args struct {
 	Datestamp  string
 	Components *[]string
 }) ([]*BugResolver, error) {
 
+	tx, ok := resolverctx.GetTx(ctx)
+	if !ok {
+		log.Printf("Error getting transaction from context.")
+		return nil, fmt.Errorf("Unable to get transaction from context")
+	}
+
 	// Parse input
-	date, err := r.parseDatestamp(args.Datestamp)
+	date, err := r.parseDatestamp(tx, args.Datestamp)
 	if err != nil {
 		safe, err := safeError(err, "Unable to parse date %q", args.Datestamp)
 		log.Printf("Error parsing date: %v", err)
@@ -110,7 +116,7 @@ func (r *Resolver) Bugs(args struct {
 	components := parseComponents(args.Components)
 
 	// Query the database for a list of bugs given the datestamp/components)
-	bugs, err := r.getBugs(date, components)
+	bugs, err := r.getBugs(tx, date, components)
 	if err != nil {
 		safe, err := safeError(err, "Error getting list of bugs")
 		log.Printf("Error querying for bugs: %v", err)
@@ -121,13 +127,19 @@ func (r *Resolver) Bugs(args struct {
 }
 
 // Snapshot grabs the list of bugs and rollup for a given date
-func (r *Resolver) Snapshot(args struct {
+func (r *Resolver) Snapshot(ctx context.Context, args struct {
 	Datestamp  string
 	Components *[]string
 }) (*SnapshotResolver, error) {
 
+	tx, ok := resolverctx.GetTx(ctx)
+	if !ok {
+		log.Printf("Error getting transaction from context.")
+		return nil, fmt.Errorf("Unable to get transaction from context")
+	}
+
 	// Parse input
-	date, err := r.parseDatestamp(args.Datestamp)
+	date, err := r.parseDatestamp(tx, args.Datestamp)
 	if err != nil {
 		safe, err := safeError(err, "Unable to parse date %q", args.Datestamp)
 		log.Printf("Error parsing date: %v", err)
@@ -136,7 +148,7 @@ func (r *Resolver) Snapshot(args struct {
 	components := parseComponents(args.Components)
 
 	// Grab the list of bugs (as bugResolvers)
-	brs, err := r.getBugs(date, components)
+	brs, err := r.getBugs(tx, date, components)
 	if err != nil {
 		safe, err := safeError(err, "Error getting list of bugs")
 		log.Printf("Error querying for bugs: %v", err)
@@ -145,7 +157,7 @@ func (r *Resolver) Snapshot(args struct {
 
 	// Get the rollup for the current date
 	// We will NOT filter by targetRelease for snapshot
-	ru, err := r.getRollup(date, components, nil)
+	ru, err := r.getRollup(tx, date, components, nil)
 	if err != nil {
 		safe, underlying := safeError(err, "Error getting rollup for date %q", date)
 		log.Printf("Error getting snapshot rollup: %v", underlying)
@@ -160,29 +172,30 @@ func (r *Resolver) Snapshot(args struct {
 	}, nil
 }
 
-// getRollup fetches date's totals for all (total), new, and closed bugs
+// getRollup fetches a single date's totals for all (total), new, and closed bugs
 // for each of all bugs, blocker bugs, and bugs with customer cases.
 // Filters on components and targetRelease if provided.
 // We assume that the inputs have already been parsed.
 // Returns nil if the given datestamp has no bugs.
-func (r *Resolver) getRollup(datestamp string, components []string, targets []string) (*RollupResolver, error) {
+// NOTE - Currently not used, but will remain in case a single rollup endpoint is added
+func (r *Resolver) getRollup(tx db.ReadQuerier, datestamp string, components []string, targets []string) (*RollupResolver, error) {
 	// Get previous date to compare for new/closed bugs
-	previousTime, err := r.dbClient.GetPreviousDate(datestamp)
+	previousTime, err := tx.GetPreviousDate(datestamp)
 	if err != nil {
 		return nil, newAPISafeError(fmt.Errorf("unable to get previous date: %v", err), "Unable to create rollup for date %q.  Error getting prior date for new/closed comparisons.", datestamp)
 	}
 	previous := previousTime.Format(dateFormat)
 
 	// Get the breakdowns for each set
-	all, err := r.dbClient.GetBreakdown(previous, datestamp, components, nil, false, targets)
+	all, err := tx.GetBreakdown(previous, datestamp, components, nil, false, targets)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get breakdown: %v", err)
 	}
-	blockers, err := r.dbClient.GetBreakdown(previous, datestamp, components, r.blockers, false, targets)
+	blockers, err := tx.GetBreakdown(previous, datestamp, components, r.blockers, false, targets)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get breakdown: %v", err)
 	}
-	custCases, err := r.dbClient.GetBreakdown(previous, datestamp, components, nil, true, targets)
+	custCases, err := tx.GetBreakdown(previous, datestamp, components, nil, true, targets)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get breakdown: %v", err)
 	}
@@ -198,25 +211,62 @@ func (r *Resolver) getRollup(datestamp string, components []string, targets []st
 // getRollups gets a list of rollups for every day between startDate and endDate
 // Dates with no data will be skipped
 // Input is assumed to be parsed
-func (r Resolver) getRollups(startDate, endDate time.Time, components, targets []string) ([]*RollupResolver, error) {
+func (r *Resolver) getRollups(tx db.ReadQuerier, startDate, endDate time.Time, components, targets []string) ([]*RollupResolver, error) {
 	var rollups []*RollupResolver
 
-	// Loop over days between start and end date (inclusive)
-	for d := startDate; !d.Equal(endDate.AddDate(0, 0, 1)); d = d.AddDate(0, 0, 1) {
-		rollup, err := r.getRollup(d.Format(dateFormat), components, targets)
-		if err != nil || rollup == nil {
-			// Don't hard error if an individual rollup fails or doesn't exist
-			// Simply skip it and move on
+	// Query db for breakdown maps
+	all, err := tx.GetBreakdowns(components, nil, false, targets)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get breakdowns for all bugs: %v", err)
+	}
+	blockers, err := tx.GetBreakdowns(components, r.blockers, false, targets)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get breakdowns for blocker bugs: %v", err)
+	}
+	custCases, err := tx.GetBreakdowns(components, nil, true, targets)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get breakdowns for bugs with customer cases: %v", err)
+	}
+
+	// Loop through startDate to endDate (inclusive) and attempt to use d as key
+	for d := startDate; !d.After(endDate); d = d.AddDate(0, 0, 1) {
+		var b db.Breakdown
+
+		// Grab breakdowns and create BreakdownResolvers for to craft a rollup
+		b, ok := all[d]
+		if !ok {
+			// If no data for given date, skip this date
 			continue
 		}
-		rollups = append(rollups, rollup)
+		tempAll := &BreakdownResolver{b}
+
+		b, ok = blockers[d]
+		if !ok {
+			// If no data for given date, skip this date
+			continue
+		}
+		tempBlockers := &BreakdownResolver{b}
+
+		b, ok = custCases[d]
+		if !ok {
+			// If no data for given date, skip this date
+			continue
+		}
+		tempCustCases := &BreakdownResolver{b}
+
+		rollups = append(rollups, &RollupResolver{
+			datestamp:     d.Format(dateFormat),
+			all:           tempAll,
+			blockers:      tempBlockers,
+			customerCases: tempCustCases,
+		})
 	}
 
 	return rollups, nil
 }
 
 // getRelease is a helper function to get a release rollup for the given release/components
-func (r Resolver) getRelease(name string, components []string) (*ReleaseResolver, error) {
+func (r *Resolver) getRelease(tx db.ReadQuerier, name string, components []string) (*ReleaseResolver, error) {
 	// Lookup release info by name
 	thisRelease, ok := r.releases[name]
 	if !ok {
@@ -225,7 +275,7 @@ func (r Resolver) getRelease(name string, components []string) (*ReleaseResolver
 	}
 
 	// Parse the GA date.  It will default to latest date in the db.
-	end, err := r.parseDatestamp(thisRelease.Dates.Ga)
+	end, err := r.parseDatestamp(tx, thisRelease.Dates.Ga)
 	if err != nil {
 		safe, err := safeError(err, "Unable to parse date %q", thisRelease.Dates.Ga)
 		log.Printf("Error parsing date: %v", err)
@@ -242,7 +292,7 @@ func (r Resolver) getRelease(name string, components []string) (*ReleaseResolver
 	// SELECT MIN(datestamp) FROM bugs WHERE targetRelease in ARRAY(targets);
 	start := thisRelease.Dates.Start
 	if start == "" {
-		startTime, err := r.dbClient.GetEarliestDateForTargets(thisRelease.Targets)
+		startTime, err := tx.GetEarliestDateForTargets(thisRelease.Targets)
 		if err != nil {
 			log.Printf("Unable to find earliest date for release %q. Using 3 sprints instead. Error: %v", name, err)
 			start = endDate.AddDate(0, 0, -63).Format(dateFormat)
@@ -250,7 +300,7 @@ func (r Resolver) getRelease(name string, components []string) (*ReleaseResolver
 			start = startTime.Format(dateFormat)
 		}
 	}
-	start, err = r.parseDatestamp(start)
+	start, err = r.parseDatestamp(tx, start)
 	if err != nil {
 		safe, err := safeError(err, "Unable to parse date %q", start)
 		log.Printf("Error parsing date: %v", err)
@@ -272,7 +322,7 @@ func (r Resolver) getRelease(name string, components []string) (*ReleaseResolver
 		return nil, newAPISafeError(err, "invalid dates for release %q", name)
 	}
 
-	rollups, err := r.getRollups(startDate, endDate, components, thisRelease.Targets)
+	rollups, err := r.getRollups(tx, startDate, endDate, components, thisRelease.Targets)
 	if err != nil {
 		return nil, fmt.Errorf("release: error getting list of rollups: %v", err)
 	}
@@ -284,15 +334,21 @@ func (r Resolver) getRelease(name string, components []string) (*ReleaseResolver
 }
 
 // Release creates, populates, and returns a ReleaseResolver
-func (r Resolver) Release(args struct {
+func (r *Resolver) Release(ctx context.Context, args struct {
 	Name       string
 	Components *[]string
 }) (*ReleaseResolver, error) {
 
+	tx, ok := resolverctx.GetTx(ctx)
+	if !ok {
+		log.Printf("Error getting transaction from context.")
+		return nil, fmt.Errorf("Unable to get transaction from context")
+	}
+
 	// Parse input
 	components := parseComponents(args.Components)
 
-	release, err := r.getRelease(args.Name, components)
+	release, err := r.getRelease(tx, args.Name, components)
 	if err != nil {
 		safe, underlying := safeError(err, "Error querying for release %q", args.Name)
 		log.Printf("Error getting release information: %v", underlying)
@@ -303,11 +359,18 @@ func (r Resolver) Release(args struct {
 }
 
 // Rollups creates and returns a list of rollups over the past 3 sprints (9 weeks).
-func (r Resolver) Rollups(args struct{ Components *[]string }) ([]*RollupResolver, error) {
+func (r *Resolver) Rollups(ctx context.Context, args struct{ Components *[]string }) ([]*RollupResolver, error) {
+
+	tx, ok := resolverctx.GetTx(ctx)
+	if !ok {
+		log.Printf("Error getting transaction from context.")
+		return nil, fmt.Errorf("Unable to get transaction from context")
+	}
+
 	// Parse input and setup dates
 	components := parseComponents(args.Components)
 
-	endDate, err := r.dbClient.GetLatest()
+	endDate, err := tx.GetLatest()
 	if err != nil {
 		safe, underlying := safeError(err, "Error getting 'latest' date")
 		log.Printf("Unable to get latest date: %v", underlying)
@@ -317,7 +380,7 @@ func (r Resolver) Rollups(args struct{ Components *[]string }) ([]*RollupResolve
 	// Start the graph data 9 weeks (3 sprints) before the end date.
 	startDate := endDate.AddDate(0, 0, -63)
 
-	rollups, err := r.getRollups(startDate, endDate, components, nil)
+	rollups, err := r.getRollups(tx, startDate, endDate, components, nil)
 	if err != nil {
 		safe, underlying := safeError(err, "Unable to get list of rollup data")
 		log.Printf("Error getting rollups: %v", underlying)
@@ -328,13 +391,20 @@ func (r Resolver) Rollups(args struct{ Components *[]string }) ([]*RollupResolve
 }
 
 // Releases is the query endpoint to return a list of all releases
-func (r Resolver) Releases(args struct{ Components *[]string }) ([]*ReleaseResolver, error) {
+func (r *Resolver) Releases(ctx context.Context, args struct{ Components *[]string }) ([]*ReleaseResolver, error) {
+
+	tx, ok := resolverctx.GetTx(ctx)
+	if !ok {
+		log.Printf("Error getting transaction from context.")
+		return nil, fmt.Errorf("Unable to get transaction from context")
+	}
+
 	components := parseComponents(args.Components)
 
 	var releaseResolvers []*ReleaseResolver
 	for name := range r.releases {
 		// Get the releases
-		releaseResolver, err := r.getRelease(name, components)
+		releaseResolver, err := r.getRelease(tx, name, components)
 		if err != nil {
 			safe, underlying := safeError(err, "Unable to retreive release information for %q", name)
 			log.Printf("Error retrieving release information for %q: %v", name, underlying)

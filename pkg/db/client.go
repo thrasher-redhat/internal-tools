@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/lib/pq"
@@ -18,14 +19,22 @@ type WriteClient interface {
 	//SnapshotTrello() will be here in the future
 }
 
-// ReadClient knows how to query the database (read-only)
+// ReadClient knows how to query the database atomically (read-only)
 type ReadClient interface {
+	Begin() (ReadQuerier, error)
+}
+
+// ReadQuerier knows how to query the database in a transaction (read-only)
+type ReadQuerier interface {
 	GetLatest() (time.Time, error)
 	GetEarliest() (time.Time, error)
 	GetPreviousDate(string) (time.Time, error)
 	GetEarliestDateForTargets([]string) (time.Time, error)
-	GetBreakdown(string, string, []string, []string, bool, []string) (Breakdown, error)
-	GetBugs(string, []string) ([]bugzilla.Bug, error)
+	GetBreakdown(startDate string, endDate string, components []string, keywords []string, custCase bool, TargetReleases []string) (Breakdown, error)
+	GetBreakdowns(components []string, keywords []string, custCase bool, targetReleases []string) (map[time.Time]Breakdown, error)
+	GetBugs(datestamp string, components []string) ([]bugzilla.Bug, error)
+
+	End() error
 }
 
 // Client knows how to connect and interact with the database
@@ -37,6 +46,11 @@ type Client interface {
 
 type postgresClient struct {
 	database *sql.DB
+}
+
+type postgresQuerier struct {
+	tx   *sql.Tx
+	txMu sync.Mutex
 }
 
 // NewClient creates and opens a db connection
@@ -137,7 +151,7 @@ func storeBugs(tx *sql.Tx, bugs bugzilla.Bugs) error {
 }
 
 // SnapshotBugzilla removes today's bugs (if any) and stores the new bugs in a single transaction
-func (c postgresClient) SnapshotBugzilla(bugs bugzilla.Bugs) error {
+func (c *postgresClient) SnapshotBugzilla(bugs bugzilla.Bugs) error {
 	// Setup transaction to remove today's bugs AND insert new bugs for today
 	tx, err := c.database.Begin()
 	if err != nil {
