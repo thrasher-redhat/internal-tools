@@ -289,3 +289,285 @@ func (q *postgresQuerier) GetBreakdown(startDate, endDate string, components []s
 		Closed: closed,
 	}, nil
 }
+
+// GetBreakdowns gets the breakdowns for ALL dates in the table (with the given filters)
+func (q *postgresQuerier) GetBreakdowns(components []string, keywords []string, custCase bool, targetReleases []string) (map[time.Time]Breakdown, error) {
+	// Call helper funcs to populate maps for total/new/closed bugs
+	totalCounts, err := q.getTotalCounts(components, keywords, custCase, targetReleases)
+	if err != nil {
+		return nil, fmt.Errorf("error getting date:count map of total bugs: %v", err)
+	}
+	newCounts, err := q.getNewCounts(components, keywords, custCase, targetReleases)
+	if err != nil {
+		return nil, fmt.Errorf("error getting date:count map of new bugs: %v", err)
+	}
+	closedCounts, err := q.getClosedCounts(components, keywords, custCase, targetReleases)
+	if err != nil {
+		return nil, fmt.Errorf("error getting date:count map of closed bugs: %v", err)
+	}
+
+	// Verify that all keys are the same length
+	if !(len(totalCounts) == len(newCounts) && len(newCounts) == len(closedCounts)) {
+		return nil, fmt.Errorf("breakdown key lengths do not match (total|new|closed): %q|%q|%q", len(totalCounts), len(newCounts), len(closedCounts))
+	}
+
+	// Map of breakdowns to return (with datestamp as the key)
+	breakdowns := make(map[time.Time]Breakdown)
+
+	// Create breakdown and add it to the map for each key as key:breakdown
+	for key := range totalCounts {
+		breakdowns[key] = Breakdown{
+			Total:  totalCounts[key],
+			New:    newCounts[key],
+			Closed: closedCounts[key],
+		}
+	}
+
+	return breakdowns, nil
+}
+
+// getTotalCounts crafts and executes a query to get the total bug counts for each day (that meet the given filters)
+func (q *postgresQuerier) getTotalCounts(components []string, keywords []string, custCase bool, targetReleases []string) (map[time.Time]int, error) {
+	// Setup the base query
+	query := "WITH ds AS (SELECT DISTINCT datestamp from bugs), " +
+		"total AS (SELECT ds.datestamp, bugs1.id FROM bugs bugs1, ds WHERE bugs1.datestamp = ds.datestamp"
+	args := []interface{}{}
+
+	// QUERY CRAFTING
+	if components != nil {
+		// Convert components to an interface slice
+		typelessComponents := make([]interface{}, len(components))
+		for i := range components {
+			typelessComponents[i] = components[i]
+		}
+
+		// Append the query and arguments together
+		query, args = appendQueryConditional(query, args, "AND bugs1.component = Any(ARRAY[%v])", typelessComponents)
+	}
+	if len(keywords) > 0 {
+		// Convert keywords to an interface slice
+		typelessKeywords := make([]interface{}, len(keywords))
+		for i := range keywords {
+			typelessKeywords[i] = keywords[i]
+		}
+
+		// Append the query and arguments together
+		query, args = appendQueryConditional(query, args, "AND bugs1.keywords && ARRAY[%v]", typelessKeywords)
+	}
+	if custCase == true {
+		// Query the jsonb directly for external bz sources with the desired id
+		// Append the query and args together
+		query, args = appendQueryConditional(query, args, "AND %v in (SELECT CAST( jsonb_array_elements(bugs1.externals)->>'ext_bz_id' AS INT))", []interface{}{bugzilla.ExternalID})
+	}
+	if targetReleases != nil && len(targetReleases) > 0 {
+		// Convert keywords to an interface slice
+		typelessTargets := make([]interface{}, len(targetReleases))
+		for i := range targetReleases {
+			typelessTargets[i] = targetReleases[i]
+		}
+
+		query, args = appendQueryConditional(query, args, "AND bugs1.target_release = Any(ARRAY[%v])", typelessTargets)
+	}
+
+	// Add the trailing part of the base query
+	query += ") SELECT ds.datestamp, count(id) FROM ds LEFT OUTER JOIN total ON ds.datestamp = total.datestamp " +
+		"GROUP BY ds.datestamp"
+
+	// Execute query
+	q.txMu.Lock()
+	defer q.txMu.Unlock()
+	rows, err := q.tx.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Map of datestamp:count
+	m := make(map[time.Time]int)
+
+	// Parse the data into temporary datestamp/counts
+	var tempDate time.Time
+	var tempCount int
+	for rows.Next() {
+		err = rows.Scan(
+			&tempDate,
+			&tempCount,
+		)
+		if err != nil {
+			// Skip rows with errors
+			log.Printf("Error scanning row: %v", err)
+		} else {
+			// pq uses +0000 but NOT UTC somehow, so convert to UTC (time is exactly the same)
+			// See https://github.com/lib/pq/issues/329
+			m[tempDate.UTC()] = tempCount
+		}
+	}
+	err = rows.Err()
+	if err != nil {
+		return nil, fmt.Errorf("error while scanning rows of total counts: %v", err)
+	}
+
+	return m, nil
+}
+
+// getNewCounts crafts and executes a query to get the new bug counts for each day (that meet the given filters)
+func (q *postgresQuerier) getNewCounts(components []string, keywords []string, custCase bool, targetReleases []string) (map[time.Time]int, error) {
+	// Setup the base query
+	query := "WITH ds AS (SELECT DISTINCT datestamp FROM bugs), " +
+		"dates AS (SELECT datestamp, LEAD(datestamp) OVER (ORDER BY datestamp desc) AS prev FROM ds), " +
+		"new AS (SELECT dates.datestamp, bugs1.id FROM bugs bugs1, dates WHERE bugs1.datestamp = dates.datestamp"
+	args := []interface{}{}
+
+	// QUERY CRAFTING
+	if components != nil {
+		// Convert components to an interface slice
+		typelessComponents := make([]interface{}, len(components))
+		for i := range components {
+			typelessComponents[i] = components[i]
+		}
+		// Append the query and arguments together
+		query, args = appendQueryConditional(query, args, "AND bugs1.component = Any(ARRAY[%v])", typelessComponents)
+	}
+	if len(keywords) > 0 {
+		// Convert keywords to an interface slice
+		typelessKeywords := make([]interface{}, len(keywords))
+		for i := range keywords {
+			typelessKeywords[i] = keywords[i]
+		}
+		// Append the query and arguments together
+		query, args = appendQueryConditional(query, args, "AND bugs1.keywords && ARRAY[%v]", typelessKeywords)
+	}
+	if custCase == true {
+		// Query the jsonb directly
+		// We care about external bz sources with the id that matches the "Red Hat Customer Portal"
+		query, args = appendQueryConditional(query, args, "AND %v in (SELECT CAST( jsonb_array_elements(bugs1.externals)->>'ext_bz_id' AS INT))", []interface{}{bugzilla.ExternalID})
+	}
+	if targetReleases != nil && len(targetReleases) > 0 {
+		// Convert keywords to an interface slice
+		typelessTargets := make([]interface{}, len(targetReleases))
+		for i := range targetReleases {
+			typelessTargets[i] = targetReleases[i]
+		}
+		query, args = appendQueryConditional(query, args, "AND bugs1.target_release = Any(ARRAY[%v])", typelessTargets)
+	}
+
+	// Add the trailing part of the base query
+	query += " AND NOT EXISTS (SELECT null FROM bugs bugs2 WHERE bugs2.id = bugs1.id AND bugs2.datestamp = dates.prev)) " +
+		"SELECT ds.datestamp, count(id) FROM ds LEFT OUTER JOIN new ON ds.datestamp = new.datestamp GROUP BY ds.datestamp"
+
+	// Execute query
+	q.txMu.Lock()
+	defer q.txMu.Unlock()
+	rows, err := q.tx.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Map of datestamp:count
+	m := make(map[time.Time]int)
+
+	// Parse the data into temporary datestamp/counts
+	var tempDate time.Time
+	var tempCount int
+	for rows.Next() {
+		err = rows.Scan(
+			&tempDate,
+			&tempCount,
+		)
+		if err != nil {
+			log.Printf("Error scanning row: %v", err)
+		} else {
+			// pq uses +0000 but NOT UTC somehow, so convert to UTC (time is exactly the same)
+			// See https://github.com/lib/pq/issues/329
+			m[tempDate.UTC()] = tempCount
+		}
+	}
+	err = rows.Err()
+	if err != nil {
+		return nil, fmt.Errorf("error while scanning rows of new counts: %v", err)
+	}
+
+	return m, nil
+}
+
+// getClosedCounts crafts and executes a query to get the closed bug counts for each day (that meet the given filters)
+func (q *postgresQuerier) getClosedCounts(components []string, keywords []string, custCase bool, targetReleases []string) (map[time.Time]int, error) {
+	// Setup the base query
+	query := "WITH ds AS (SELECT DISTINCT datestamp FROM bugs), " +
+		"dates AS (SELECT datestamp, LEAD(datestamp) OVER (ORDER BY datestamp desc) AS prev FROM ds), " +
+		"closed AS (SELECT dates.datestamp, bugs1.id FROM bugs bugs1, dates WHERE bugs1.datestamp = dates.prev"
+	args := []interface{}{}
+
+	// QUERY CRAFTING
+	if components != nil {
+		// Convert components to an interface slice
+		typelessComponents := make([]interface{}, len(components))
+		for i := range components {
+			typelessComponents[i] = components[i]
+		}
+		// Append the query and arguments together
+		query, args = appendQueryConditional(query, args, "AND bugs1.component = Any(ARRAY[%v])", typelessComponents)
+	}
+	if len(keywords) > 0 {
+		// Convert keywords to an interface slice
+		typelessKeywords := make([]interface{}, len(keywords))
+		for i := range keywords {
+			typelessKeywords[i] = keywords[i]
+		}
+		// Append the query and arguments together
+		query, args = appendQueryConditional(query, args, "AND bugs1.keywords && ARRAY[%v]", typelessKeywords)
+	}
+	if custCase == true {
+		// Query the jsonb directly
+		// We care about external bz sources with the id that matches the "Red Hat Customer Portal"
+		query, args = appendQueryConditional(query, args, "AND %v in (SELECT CAST( jsonb_array_elements(bugs1.externals)->>'ext_bz_id' AS INT))", []interface{}{bugzilla.ExternalID})
+	}
+	if targetReleases != nil && len(targetReleases) > 0 {
+		// Convert keywords to an interface slice
+		typelessTargets := make([]interface{}, len(targetReleases))
+		for i := range targetReleases {
+			typelessTargets[i] = targetReleases[i]
+		}
+		query, args = appendQueryConditional(query, args, "AND bugs1.target_release = Any(ARRAY[%v])", typelessTargets)
+	}
+
+	// Add the trailing part of the base query
+	query += " AND NOT EXISTS (SELECT null FROM bugs bugs2 WHERE bugs2.id = bugs1.id AND bugs2.datestamp = dates.datestamp)) " +
+		"SELECT ds.datestamp, count(id) FROM ds LEFT OUTER JOIN closed ON ds.datestamp = closed.datestamp GROUP BY ds.datestamp"
+
+	// Execute query
+	q.txMu.Lock()
+	defer q.txMu.Unlock()
+	rows, err := q.tx.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Map of datestamp:count
+	m := make(map[time.Time]int)
+
+	// Parse the data into temporary datestamp/counts
+	var tempDate time.Time
+	var tempCount int
+	for rows.Next() {
+		err = rows.Scan(
+			&tempDate,
+			&tempCount,
+		)
+		if err != nil {
+			log.Printf("Error scanning row: %v", err)
+		} else {
+			// pq uses +0000 but NOT UTC somehow, so convert to UTC (time is exactly the same)
+			// See https://github.com/lib/pq/issues/329
+			m[tempDate.UTC()] = tempCount
+		}
+	}
+	err = rows.Err()
+	if err != nil {
+		return nil, fmt.Errorf("error while scanning rows of new counts: %v", err)
+	}
+
+	return m, nil
+}

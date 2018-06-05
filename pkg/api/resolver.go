@@ -172,11 +172,12 @@ func (r *Resolver) Snapshot(ctx context.Context, args struct {
 	}, nil
 }
 
-// getRollup fetches date's totals for all (total), new, and closed bugs
+// getRollup fetches a single date's totals for all (total), new, and closed bugs
 // for each of all bugs, blocker bugs, and bugs with customer cases.
 // Filters on components and targetRelease if provided.
 // We assume that the inputs have already been parsed.
 // Returns nil if the given datestamp has no bugs.
+// NOTE - Currently not used, but will remain in case a single rollup endpoint is added
 func (r *Resolver) getRollup(tx db.ReadQuerier, datestamp string, components []string, targets []string) (*RollupResolver, error) {
 	// Get previous date to compare for new/closed bugs
 	previousTime, err := tx.GetPreviousDate(datestamp)
@@ -213,15 +214,52 @@ func (r *Resolver) getRollup(tx db.ReadQuerier, datestamp string, components []s
 func (r *Resolver) getRollups(tx db.ReadQuerier, startDate, endDate time.Time, components, targets []string) ([]*RollupResolver, error) {
 	var rollups []*RollupResolver
 
-	// Loop over days between start and end date (inclusive)
-	for d := startDate; !d.Equal(endDate.AddDate(0, 0, 1)); d = d.AddDate(0, 0, 1) {
-		rollup, err := r.getRollup(tx, d.Format(dateFormat), components, targets)
-		if err != nil || rollup == nil {
-			// Don't hard error if an individual rollup fails or doesn't exist
-			// Simply skip it and move on
+	// Query db for breakdown maps
+	all, err := tx.GetBreakdowns(components, nil, false, targets)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get breakdowns for all bugs: %v", err)
+	}
+	blockers, err := tx.GetBreakdowns(components, r.blockers, false, targets)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get breakdowns for blocker bugs: %v", err)
+	}
+	custCases, err := tx.GetBreakdowns(components, nil, true, targets)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get breakdowns for bugs with customer cases: %v", err)
+	}
+
+	// Loop through startDate to endDate (inclusive) and attempt to use d as key
+	for d := startDate; !d.After(endDate); d = d.AddDate(0, 0, 1) {
+		var b db.Breakdown
+
+		// Grab breakdowns and create BreakdownResolvers for to craft a rollup
+		b, ok := all[d]
+		if !ok {
+			// If no data for given date, skip this date
 			continue
 		}
-		rollups = append(rollups, rollup)
+		tempAll := &BreakdownResolver{b}
+
+		b, ok = blockers[d]
+		if !ok {
+			// If no data for given date, skip this date
+			continue
+		}
+		tempBlockers := &BreakdownResolver{b}
+
+		b, ok = custCases[d]
+		if !ok {
+			// If no data for given date, skip this date
+			continue
+		}
+		tempCustCases := &BreakdownResolver{b}
+
+		rollups = append(rollups, &RollupResolver{
+			datestamp:     d.Format(dateFormat),
+			all:           tempAll,
+			blockers:      tempBlockers,
+			customerCases: tempCustCases,
+		})
 	}
 
 	return rollups, nil

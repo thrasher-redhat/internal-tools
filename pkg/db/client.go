@@ -30,8 +30,9 @@ type ReadQuerier interface {
 	GetEarliest() (time.Time, error)
 	GetPreviousDate(string) (time.Time, error)
 	GetEarliestDateForTargets([]string) (time.Time, error)
-	GetBreakdown(string, string, []string, []string, bool, []string) (Breakdown, error)
-	GetBugs(string, []string) ([]bugzilla.Bug, error)
+	GetBreakdown(startDate string, endDate string, components []string, keywords []string, custCase bool, TargetReleases []string) (Breakdown, error)
+	GetBreakdowns(components []string, keywords []string, custCase bool, targetReleases []string) (map[time.Time]Breakdown, error)
+	GetBugs(datestamp string, components []string) ([]bugzilla.Bug, error)
 
 	End() error
 }
